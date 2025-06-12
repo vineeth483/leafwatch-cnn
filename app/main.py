@@ -71,3 +71,21 @@ if uploaded:
         with st.spinner("Running inference…"):
             label, conf = predict(model, classes, uploaded)
         st.success(f"**Prediction:** {label}  \n**Confidence:** {conf:.1%}")
+
+# ─── Custom DTypePolicy shim ────────────────────────────────────────────────────
+from tensorflow.keras.mixed_precision import Policy
+# Map the old name "DTypePolicy" back to the real Policy class
+CUSTOM_OBJECTS = {
+    "InputLayer": patched_input_layer,
+    "DTypePolicy": Policy,
+}
+
+@st.cache_resource
+def load_model_from_drive():
+    # download logic (gdown)…
+    return tf.keras.models.load_model(
+        model_path,
+        custom_objects=CUSTOM_OBJECTS,
+        compile=False,
+    )
+

@@ -73,7 +73,7 @@ classes = load_class_indices()
 
 uploaded = st.file_uploader("Choose an image…", type=["jpg", "jpeg", "png"])
 if uploaded is not None:
-    st.image(uploaded, caption="Your upload", use_column_width=True)
+st.image(uploaded, caption="Your upload", use_container_width=True)
     if st.button("Classify"):
         with st.spinner("Running inference…"):
             label, conf = predict(model, classes, uploaded)

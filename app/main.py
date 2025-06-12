@@ -1,69 +1,73 @@
-import os
-import json
-from PIL import Image
+import os, json, gdown
+from io import BytesIO
+
 import numpy as np
 import tensorflow as tf
+from tensorflow.keras.layers import InputLayer
+from PIL import Image
 import streamlit as st
 
-# Add this
-import gdown
+# ─── Constants ─────────────────────────────────────────────────────────────────
+DRIVE_FILE_ID = "1AYvcoSixmaC5rVFGVAh0nWe-S84hqJln"
+MODEL_DIR     = "trained_model"
+MODEL_NAME    = "plant_disease_prediction_model.h5"
+CLASS_JSON    = "class_indices.json"
+IMG_SIZE      = (224, 224)
 
-# === Setup Paths ===
-working_dir = os.path.dirname(os.path.abspath(__file__))
-model_dir = os.path.join(working_dir, "trained_model")
-model_path = os.path.join(model_dir, "plant_disease_prediction_model.h5")
-class_indices_path = os.path.join(working_dir, "class_indices.json")
-
-# === Google Drive model download ===
-drive_file_id = "1AYvcoSixmaC5rVFGVAh0nWe-S84hqJln"  # replace if different
-model_url = f"https://drive.google.com/uc?id={drive_file_id}"
-
-# Make sure model exists, else download
-if not os.path.exists(model_path):
-    os.makedirs(model_dir, exist_ok=True)
-    st.info("Downloading model from Google Drive...")
-    gdown.download(model_url, model_path, quiet=False)
-
-# === Load model ===
-model = tf.keras.models.load_model(model_path)
-
-# === Load class names ===
-class_indices = json.load(open(class_indices_path))
+# ─── Custom InputLayer shim ────────────────────────────────────────────────────
+def patched_input_layer(**config):
+    # if it's coming with legacy "batch_shape", rename it to what the new class expects:
+    if "batch_shape" in config:
+        config["batch_input_shape"] = config.pop("batch_shape")
+    return InputLayer(**config)
 
 
-# === Image Preprocessing ===
-def load_and_preprocess_image(image_path, target_size=(224, 224)):
-    img = Image.open(image_path)
-    img = img.resize(target_size)
-    img_array = np.array(img)
-    img_array = np.expand_dims(img_array, axis=0)
-    img_array = img_array.astype('float32') / 255.
-    return img_array
+# ─── Download & Load Helpers ──────────────────────────────────────────────────
+@st.cache_resource
+def load_model_from_drive():
+    os.makedirs(MODEL_DIR, exist_ok=True)
+    path = os.path.join(MODEL_DIR, MODEL_NAME)
+    if not os.path.exists(path):
+        url = f"https://drive.google.com/uc?id={DRIVE_FILE_ID}"
+        st.info("Downloading model from Google Drive…")
+        gdown.download(url, path, quiet=False)
+    # Here we tell load_model to use our patched InputLayer
+    return tf.keras.models.load_model(
+        path,
+        custom_objects={"InputLayer": patched_input_layer},
+        compile=False
+    )
+
+@st.cache_data
+def load_class_indices():
+    with open(CLASS_JSON, "r") as f:
+        return json.load(f)
 
 
-# === Predict Function ===
-def predict_image_class(model, image_path, class_indices):
-    preprocessed_img = load_and_preprocess_image(image_path)
-    predictions = model.predict(preprocessed_img)
-    predicted_class_index = np.argmax(predictions, axis=1)[0]
-    predicted_class_name = class_indices[str(predicted_class_index)]
-    return predicted_class_name
+# ─── Preprocessing & Prediction ───────────────────────────────────────────────
+def preprocess(image_buf: BytesIO) -> np.ndarray:
+    img = Image.open(image_buf).convert("RGB").resize(IMG_SIZE)
+    arr = np.array(img, dtype=np.float32) / 255.0
+    return np.expand_dims(arr, 0)
+
+def predict(model, classes, buf: BytesIO):
+    x = preprocess(buf)
+    preds = model.predict(x)[0]
+    idx  = int(np.argmax(preds))
+    return classes[str(idx)], float(preds[idx])
 
 
-# === Streamlit UI ===
-st.title('🌿 Plant Disease Classifier')
+# ─── Streamlit UI ─────────────────────────────────────────────────────────────
+st.title("🌿 Plant Disease Classifier")
+st.write("Upload a leaf image and click **Classify**.")
 
-uploaded_image = st.file_uploader("Upload a plant leaf image...", type=["jpg", "jpeg", "png"])
+model = load_model_from_drive()
+classes = load_class_indices()
 
-if uploaded_image is not None:
-    image = Image.open(uploaded_image)
-    col1, col2 = st.columns(2)
-
-    with col1:
-        resized_img = image.resize((150, 150))
-        st.image(resized_img)
-
-    with col2:
-        if st.button('Classify'):
-            prediction = predict_image_class(model, uploaded_image, class_indices)
-            st.success(f'Prediction: **{str(prediction)}**')
+uploaded = st.file_uploader("Choose an image…", type=["jpg","jpeg","png"])
+if uploaded:
+    st.image(uploaded, caption="Your upload", use_column_width=True)
+    if st.button("Classify"):
+        with st.spinner("Running inference…"):
+            label, conf = predict(model, classes, uploaded)
+        st.success(f"**Prediction:** {label}  \n**Confidence:** {conf:.1%}")

@@ -39,8 +39,12 @@ def load_model():
 
 @st.cache_data
 def load_class_map():
-    with open(CLASS_FILE, "r") as f:
+    # Get the absolute path of the current script
+    current_dir = os.path.dirname(os.path.abspath(__file__))
+    full_path = os.path.join(current_dir, CLASS_FILE)
+    with open(full_path, "r") as f:
         return json.load(f)
+
 
 # ─── PREDICTION HELPERS ─────────────────────────────────────────────────────
 def preprocess(img: Image.Image):
